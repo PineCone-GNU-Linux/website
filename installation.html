@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Installation – PineCone GNU/Linux</title>
+    <link rel="stylesheet" href="style.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Ubuntu:ital,wght@0,300;0,400;0,500;0,700;1,300;1,400;1,500;1,700&display=swap" rel="stylesheet">
+</head>
+<body>
+<div class="container">
+    <header>
+    <div class="container">
+        <a href="index.html" class="logo-link">
+            <img src="assets/logo.png" alt="PineCone Linux" class="logo-img">
+        </a>
+        <nav>
+            <a href="index.html">Home</a>
+            <a href="features.html">Features</a>
+            <a href="installation.html">Installation</a>
+        </nav>
+    </div>
+</header>
+
+    <h1>Installation guide</h1>
+    <p>This guide will tell how to install PineCone GNU/Linux on a system with legacy BIOS and MBR partitioning table. The process is similar to Gentoo or Arch Linux — you must be comfortable with the command line.</p>
+
+    <div class="warning">
+        <strong>IMPORTANT WARNING:</strong> The following steps will purge all data on the target disk. Make sure you backed up any important data before continuing.
+    </div>
+
+    <h2>Requirements</h2>
+    <ul>
+        <li>A Live environment flashed to a DVD/CD or a USB (e.g., Arch Linux, Void Linux, or any distribution that provides a shell, root access and essential tools)</li>
+        <li>A working internet connection.</li>
+        <li>Patience and knowledge of bash and Linux</li>
+    </ul>
+
+    <h2>Step 1: Prepare the disk (MBR / BIOS)</h2>
+    <p>We will use <code>cfdisk</code> to create an MBR partition table and the following partitions:</p>
+    <ul>
+        <li>1 GB <strong>Hidden W95 FAT</strong> partition (will be used as <code>/boot</code>).</li>
+        <li><em>Optional</em>: 4 GB <strong>Linux swap</strong> partition.</li>
+        <li>The rest of the space as a <strong>Linux filesystem</strong> partition (will be <code>/</code>).</li>
+    </ul>
+
+    <div class="tip">
+        <strong>Why VFAT for /boot?</strong> GRUB works perfectly with FAT32, and it can be useful for compatibility with some firmware. If you prefer ext4, you can use a regular Linux partition instead. :)
+    </div>
+
+    <ol>
+        <li>Identify your target disk with <code>lsblk</code> and use it instead of /dev/sda in this tutorial. (e.g., <code>/dev/sda</code>).</li>
+        <li>Run <code>cfdisk /dev/sda</code>.</li>
+        <li>Select <code>dos</code> (MBR) label type if prompted.</li>
+        <li>Delete any existing partitions.</li>
+        <li>Create a new partition of size <strong>1 GiB</strong> – set its type to <code>Hidden W95 FAT</code> (type code <code>1b</code> or <code>1c</code>).</li>
+        <li>Create an optional swap partition – size <strong>4 GiB</strong> (or equal to your RAM if you plan to hibernate). Set its type to <code>Linux swap</code>.</li>
+        <li>Create a new partition with the remaining space – type <code>Linux filesystem</code>.</li>
+        <li>Write the partition table and exit <code>cfdisk</code>.</li>
+    </ol>
+
+    <h2>Step 2: Format the partitions</h2>
+    <pre><code># Format the boot partition as FAT32
+mkfs.vfat -F 32 /dev/sda1
+
+# (Optional) Initialize swap
+mkswap /dev/sda2
+swapon /dev/sda2
+
+# Format the root partition as ext4
+mkfs.ext4 /dev/sda3</code></pre>
+
+    <h2>Step 3: Mount the partitions and download the rootfs</h2>
+    <pre><code># Mount the root partition
+mount /dev/sda3 /mnt
+
+# Create the /boot directory and mount the boot partition
+mkdir /mnt/boot
+mount /dev/sda1 /mnt/boot
+
+# Download the latest rootfs
+cd /mnt
+wget https://github.com/PineCone-GNU-Linux/rootfs/releases/latest/rootfs.tar.gz</code></pre>
+
+    <h2>Step 4: Extract the rootfs</h2>
+    <pre><code>tar -xvf rootfs.tar.gz -C /mnt</code></pre>
+
+    <h2>Step 5: Chroot into the new system</h2>
+    <p>Before chrooting, mount the virtual filesystems:</p>
+    <pre><code>mount --bind /dev /mnt/dev
+mount --bind /proc /mnt/proc
+mount --bind /sys /mnt/sys</code></pre>
+    <p>Then chroot:</p>
+    <pre><code>chroot /mnt /bin/bash</code></pre>
+
+    <h2>Step 6: Compile the kernel</h2>
+    <p>The rootfs already contains the source code of the <strong>linux-hardened</strong> kernel in <code>/usr/src</code>. Navigate to the kernel source directory:</p>
+    <pre><code>cd /usr/src/linux-hardened-*</code></pre>
+    <p>Configure the kernel (you can use the included config or run <code>make menuconfig</code> to adjust settings for your hardware):</p>
+    <pre><code>make menuconfig</code></pre>
+    <p>Compile the kernel and modules (use <code>-j$(nproc)</code> to speed up):</p>
+    <pre><code>make -j$(nproc)</code></pre>
+    <p>Install the modules and the kernel image:</p>
+    <pre><code>make modules_install
+cp arch/x86/boot/bzImage /boot/vmlinuz</code></pre>
+
+    <div class="note">
+        <strong>Note:</strong> If you are using an initramfs, you need to generate it with <code>mkinitcpio</code> or <code>dracut</code>. The rootfs does not include one by default. For a simple setup, you can skip the initramfs if your root filesystem is not encrypted or on exotic hardware.
+    </div>
+
+    <h2>Step 7: Install and configure GRUB</h2>
+    <pre><code># Install GRUB using XBPS (fetches from Void Linux repositories)
+xbps-install -S grub
+
+# Install GRUB to the disk's MBR
+grub-install --target=i386-pc /dev/sda
+
+# Generate the GRUB configuration
+grub-mkconfig -o /boot/grub/grub.cfg</code></pre>
+
+    <h2>Step 8: Basic system configuration</h2>
+    <p>Create the <code>fstab</code> file to define mount points at boot. Edit <code>/etc/fstab</code> and add the following lines (adjust partition numbers if necessary):</p>
+    <pre><code>/dev/sda3   /         ext4    defaults        0 1
+/dev/sda1   /boot     vfat    defaults        0 2
+/dev/sda2   none      swap    sw              0 0</code></pre>
+
+    <p>Set the hostname:</p>
+    <pre><code>echo "pinecone" > /etc/hostname</code></pre>
+
+    <p>Set the root password:</p>
+    <pre><code>passwd</code></pre>
+
+    <p>Create a regular user (replace <code>username</code> with your desired name):</p>
+    <pre><code>useradd -m -G wheel -s /bin/bash username
+passwd username</code></pre>
+
+    <p>If you want <code>sudo</code> access, install it and edit the sudoers file:</p>
+    <pre><code>xbps-install -S sudo
+visudo</code></pre>
+    <p>Uncomment the line <code>%wheel ALL=(ALL) ALL</code> to allow members of the <code>wheel</code> group to use sudo.</p>
+
+    <h2>Step 9: Final steps and reboot</h2>
+    <p>Exit the chroot, unmount all partitions, and reboot:</p>
+    <pre><code>exit
+umount -R /mnt
+reboot</code></pre>
+
+    <p>After reboot, log in with your user (or root) and enjoy PineCone GNU/Linux!</p>
+
+    <h2>Alternative: GPT / UEFI installation</h2>
+<p>If your system supports UEFI and you want to use a GPT partition table, follow this guide instead of the MBR/BIOS one.</p>
+
+<div class="warning">
+    <strong>IMPORTANT WARNING:</strong> These steps will erase all data on the target disk. Back up important files before proceeding.
+</div>
+
+<h3>Step 1: Prepare the disk (GPT / UEFI)</h3>
+<p>Use <code>cfdisk</code> to create a GPT partition table and the following partitions:</p>
+<ul>
+    <li><strong>ESP (EFI System Partition)</strong> – size <strong>512 MiB to 1 GiB</strong>, type <code>EFI System</code>. It will be mounted at <code>/boot/efi</code>.</li>
+    <li><em>Optional</em>: <strong>Swap</strong> – 4 GiB (or as needed).</li>
+    <li><strong>Root partition</strong> – remaining space, type <code>Linux filesystem</code>.</li>
+</ul>
+
+<pre><code>cfdisk /dev/sda</code></pre>
+<ul>
+    <li>Select <code>gpt</code> label type.</li>
+    <li>Delete any existing partitions.</li>
+    <li>Create the ESP – size <code>+512M</code>, type <code>EFI System</code>.</li>
+    <li>Create optional swap – size <code>+4G</code>, type <code>Linux swap</code>.</li>
+    <li>Create root partition – use the remaining space, type <code>Linux filesystem</code>.</li>
+    <li>Write changes and exit.</li>
+</ul>
+
+<h3>Step 2: Format the partitions</h3>
+<pre><code># Format the ESP as FAT32
+mkfs.fat -F 32 /dev/sda1
+
+# (Optional) Initialize swap
+mkswap /dev/sda2
+swapon /dev/sda2
+
+# Format the root partition as ext4
+mkfs.ext4 /dev/sda3</code></pre>
+
+<h3>Step 3: Mount the partitions and download rootfs</h3>
+<pre><code>mount /dev/sda3 /mnt
+mkdir -p /mnt/boot/efi
+mount /dev/sda1 /mnt/boot/efi
+
+cd /mnt
+wget https://github.com/PineCone-GNU-Linux/rootfs/releases/latest/rootfs.tar.gz</code></pre>
+
+<h3>Step 4: Extract the rootfs and chroot</h3>
+<pre><code>tar -xvf rootfs.tar.gz -C /mnt
+
+mount --bind /dev /mnt/dev
+mount --bind /proc /mnt/proc
+mount --bind /sys /mnt/sys
+chroot /mnt /bin/bash</code></pre>
+
+<h3>Step 5: Compile the kernel</h3>
+<p>Same as in the MBR/BIOS section (see above).</p>
+
+<h3>Step 6: Install and configure GRUB for UEFI</h3>
+<p>Install GRUB (UEFI version) and the <code>efibootmgr</code> utility:</p>
+<pre><code>xbps-install -S grub-x86_64-efi efibootmgr</code></pre>
+<p>Install GRUB to the EFI System Partition:</p>
+<pre><code>grub-install --target=x86_64-efi --efi-directory=/boot/efi --bootloader-id=PineCone</code></pre>
+<p>Generate the GRUB configuration:</p>
+<pre><code>grub-mkconfig -o /boot/grub/grub.cfg</code></pre>
+
+<h3>Step 7: Basic system configuration</h3>
+<p>Create <code>/etc/fstab</code> with the following content (adjust partition numbers if needed):</p>
+<pre><code>/dev/sda3   /         ext4    defaults        0 1
+/dev/sda1   /boot/efi vfat    defaults        0 2
+/dev/sda2   none      swap    sw              0 0</code></pre>
+
+<p>Set hostname, root password, create a user (same as in MBR/BIOS section).</p>
+
+<h3>Step 8: Reboot</h3>
+<pre><code>exit
+umount -R /mnt
+reboot</code></pre>
+
+<p>After reboot, your system will boot via UEFI directly into PineCone Linux.</p>
+
+<div class="tip">
+    <strong>Note:</strong> Some firmware may require you to disable Secure Boot or manually add the boot entry. If GRUB does not appear, run <code>efibootmgr -v</code> from the live environment to check entries.
+</div>
+
+    <h2>Useful links</h2>
+    <ul>
+        <li><a href="https://github.com/PineCone-GNU-Linux/rootfs">rootfs (GitHub)</a></li>
+        <li><a href="https://github.com/PineCone-GNU-Linux/xbps-repository">XBPS repository</a></li>
+    </ul>
+
+    <footer>
+       
+        <p><a href="https://github.com/PineCone-GNU-Linux">GitHub</a> | <a href="https://github.com/PineCone-GNU-Linux/xbps-repository">Package Repository</a></p>
+    </footer>
+</div>
+</body>
+</html>
